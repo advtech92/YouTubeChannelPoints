@@ -13,7 +13,7 @@ DATABASE_FILE = 'channel_points.db'
 
 # YouTube Channel ID or Handle
 CHANNEL_HANDLE = 'UCsVJcf4KbO8Vz308EKpSYxw'
-
+STREAM_KEYWORD = "Live"  # Keyword to identify the correct live stream
 
 def get_authenticated_service():
     flow = InstalledAppFlow.from_client_secrets_file(
@@ -91,16 +91,19 @@ def get_channel_uploads_playlist_id(youtube, channel_id):
     return None
 
 
-def get_latest_video_id_from_playlist(youtube, playlist_id):
-    request = youtube.playlistItems().list(
+def find_correct_live_video(youtube, channel_id, keyword):
+    request = youtube.search().list(
         part="snippet",
-        playlistId=playlist_id,
-        maxResults=1
+        channelId=channel_id,
+        eventType="live",
+        type="video"
     )
     response = request.execute()
     items = response.get('items', [])
-    if items:
-        return items[0]['snippet']['resourceId']['videoId']
+    for item in items:
+        title = item['snippet']['title']
+        if keyword.lower() in title.lower():
+            return item['id']['videoId']
     return None
 
 
@@ -136,7 +139,9 @@ def get_live_chat_id(youtube, video_id):
     response = request.execute()
     items = response.get('items', [])
     if items:
-        return items[0]['liveStreamingDetails'].get('activeLiveChatId')
+        live_chat_id = items[0]['liveStreamingDetails'].get('activeLiveChatId')
+        print(f"Live Chat ID: {live_chat_id}")
+        return live_chat_id
     return None
 
 
@@ -221,12 +226,14 @@ def monitor_chat(youtube, live_chat_id):
                         conn.close()
 
                 next_page_token = response.get('nextPageToken')
+                print(f"Next page token: {next_page_token}")
 
             else:
                 print("No new messages detected; continuing to poll...")
 
         except Exception as e:
             print(f"Error while monitoring chat: {e}")
+            time.sleep(30)  # Wait before retrying in case of an error
         
         time.sleep(10)  # Adjust this delay as needed
 
@@ -263,24 +270,19 @@ def main():
         print("Channel ID not found!")
         return
 
-    playlist_id = get_channel_uploads_playlist_id(youtube, channel_id)
-    if not playlist_id:
-        print("Uploads playlist not found!")
-        return
-
-    while True:
-        video_id = get_latest_video_id_from_playlist(youtube, playlist_id)
-        if video_id and is_video_live(youtube, video_id):
-            print("Channel is live!")
-            live_chat_id = get_live_chat_id(youtube, video_id)
-            if live_chat_id:
-                print("Monitoring chat...")
-                monitor_chat(youtube, live_chat_id)
-            else:
-                print("No live chat ID available.")
+    video_id = find_correct_live_video(youtube, channel_id, STREAM_KEYWORD)
+    if video_id and is_video_live(youtube, video_id):
+        print("Correct live stream found and is live!")
+        live_chat_id = get_live_chat_id(youtube, video_id)
+        if live_chat_id:
+            print("Monitoring chat...")
+            monitor_chat(youtube, live_chat_id)
         else:
-            print("Channel is not live.")
-        time.sleep(300)  # Check every 5 minutes
+            print("No live chat ID available.")
+    else:
+        print("Could not find the correct live stream or it is not live.")
+
+    time.sleep(300)  # Check every 5 minutes
 
 
 if __name__ == "__main__":
